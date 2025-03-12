@@ -2,6 +2,11 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
+const express = require('express');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const HOST = '0.0.0.0';
 
 // פונקציית גיבוי
 function backupResponses() {
@@ -133,4 +138,8 @@ process.on('unhandledRejection', (err) => {
     console.error('Unhandled Rejection:', err);
 });
 
-client.initialize(); 
+client.initialize();
+
+app.listen(PORT, HOST, () => {
+    console.log(`Server is running on port ${PORT}`);
+}); 
