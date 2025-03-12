@@ -142,8 +142,13 @@ process.on('unhandledRejection', (err) => {
     console.error('Unhandled Rejection:', err);
 });
 
-client.initialize();
-
+// Start the server first
 app.listen(PORT, HOST, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Server is running on http://${HOST}:${PORT}`);
+    
+    // Initialize WhatsApp client after server is running
+    console.log('Starting WhatsApp client...');
+    client.initialize().catch(err => {
+        console.error('Failed to initialize client:', err);
+    });
 }); 
