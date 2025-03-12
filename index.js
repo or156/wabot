@@ -5,7 +5,9 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
+
+console.log('מתחיל את האפליקציה...');
 
 // נקודות קצה של השרת
 app.get('/', (req, res) => {
@@ -27,6 +29,7 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 
 // פונקציה ליצירת הקליינט
 function createClient() {
+    console.log('יוצר קליינט חדש...');
     return new Client({
         authStrategy: new LocalAuth(),
         puppeteer: {
@@ -48,7 +51,7 @@ function createClient() {
 async function reconnect() {
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
         console.error('הגענו למקסימום נסיונות התחברות. מפעיל מחדש את השרת...');
-        process.exit(1); // Render יפעיל מחדש את השרת
+        process.exit(1);
         return;
     }
 
@@ -63,21 +66,24 @@ async function reconnect() {
         initializeClient();
     } catch (error) {
         console.error('שגיאה בנסיון התחברות מחדש:', error);
-        setTimeout(reconnect, 5000 * reconnectAttempts); // זמן המתנה גדל עם כל נסיון
+        setTimeout(reconnect, 5000 * reconnectAttempts);
     }
 }
 
 // אתחול הקליינט והאזנה לאירועים
 function initializeClient() {
+    console.log('מאתחל את הקליינט...');
+
     client.on('qr', (qr) => {
-        console.log('התקבל קוד QR, יש לסרוק אותו להתחברות:');
+        console.log('\n\nהתקבל קוד QR, יש לסרוק אותו להתחברות:\n');
         qrcode.generate(qr, { small: true });
+        console.log('\n');
     });
 
     client.on('ready', () => {
         console.log('הבוט מחובר ופעיל!');
         isClientReady = true;
-        reconnectAttempts = 0; // איפוס מונה הנסיונות כשמצליחים להתחבר
+        reconnectAttempts = 0;
     });
 
     client.on('disconnected', (reason) => {
@@ -92,28 +98,47 @@ function initializeClient() {
         reconnect();
     });
 
+    // הוספת אירועים חדשים לדיבאג
+    client.on('loading_screen', (percent, message) => {
+        console.log('טוען:', percent, '%', message);
+    });
+
+    client.on('authenticated', () => {
+        console.log('הבוט אומת בהצלחה!');
+    });
+
     client.on('message', async (msg) => {
-        console.log('התקבלה הודעה:', msg.body);
+        // מסנן הודעות מקבוצות והודעות סטטוס
+        if (msg.from.includes('@g.us') || msg.from === 'status@broadcast') {
+            return;
+        }
+
+        console.log('התקבלה הודעה פרטית:', msg.body);
+        console.log('מאת:', msg.from);
         
         try {
+            // בודק קודם אם יש תשובה מוכנה - זה המקרה הנפוץ ביותר
+            if (learnedResponses[msg.body]) {
+                console.log('נמצאה תשובה מוכנה:', learnedResponses[msg.body]);
+                await msg.reply(learnedResponses[msg.body]);
+                return;
+            }
+
+            // אם אין תשובה מוכנה, בודק אם זו פקודה
             const command = commands[msg.body.split(' ')[0]];
             if (command) {
+                console.log('מבצע פקודה:', msg.body);
                 await command(msg);
-                console.log('הפקודה בוצעה:', msg.body);
                 return;
             }
             
-            if (learnedResponses[msg.body]) {
-                await msg.reply(learnedResponses[msg.body]);
-                console.log('נשלחה תשובה להודעה:', msg.body);
-                return;
-            }
+            console.log('לא נמצאה תשובה להודעה זו');
         } catch (error) {
             console.error('שגיאה בטיפול בהודעה:', error);
         }
     });
 
-    // התחלת הקליינט
+    console.log('מתחיל את הקליינט...');
     client.initialize().catch(err => {
         console.error('שגיאה באתחול הקליינט:', err);
         reconnect();
@@ -156,13 +181,31 @@ function extractQuotedText(text) {
 
 // הגדרת הפקודות
 const commands = {
+    'עזרה': async (msg) => {
+        const helpText = `הפקודות הזמינות:
+1. שלום - קבלת ברכה אקראית
+2. למד "שאלה" תגיב "תשובה" - לימוד תשובה חדשה
+3. רשימה - הצגת כל התשובות שלמדתי
+4. עזרה - הצגת רשימה זו`;
+        await msg.reply(helpText);
+    },
+    'שלום': async (msg) => {
+        const greetings = [
+            'היי! מה שלומך?',
+            'שלום וברכה!',
+            'ברוך הבא! איך אפשר לעזור?',
+            'נעים מאוד! במה אוכל לסייע?'
+        ];
+        const randomGreeting = greetings[Math.floor(Math.random() * greetings.length)];
+        await msg.reply(randomGreeting);
+    },
     'למד': async (msg) => {
         try {
             const fullText = msg.body;
             const parts = extractQuotedText(fullText);
             
             if (!parts || parts.length !== 2) {
-                await msg.reply('למד "הודעה נכנסת" תגיב "הודעה יוצאת"');
+                await msg.reply('הפורמט הנכון הוא:\nלמד "הודעה נכנסת" תגיב "הודעה יוצאת"');
                 return;
             }
 
@@ -173,10 +216,10 @@ const commands = {
             fs.writeFileSync('./learned.json', JSON.stringify(learnedResponses, null, 2));
             backupResponses();
             
-            await msg.reply(`למדתי: "${question}" -> "${answer}"`);
+            await msg.reply(`למדתי:\nכשאקבל: "${question}"\nאגיב: "${answer}"`);
         } catch (error) {
-            console.error('Error in learn command:', error);
-            await msg.reply('אירעה שגיאה בלמידה, נסה שוב');
+            console.error('שגיאה בפקודת למד:', error);
+            await msg.reply('אירעה שגיאה בלמידה. הפורמט הנכון הוא:\nלמד "הודעה נכנסת" תגיב "הודעה יוצאת"');
         }
     },
     'רשימה': async (msg) => {
@@ -208,7 +251,8 @@ process.on('unhandledRejection', (err) => {
 const startServer = () => {
     return new Promise((resolve, reject) => {
         try {
-            const server = app.listen(PORT, '0.0.0.0', () => {
+            console.log(`מנסה להפעיל שרת בפורט ${PORT}...`);
+            const server = app.listen(PORT, () => {
                 console.log(`השרת פעיל בפורט ${PORT}`);
                 resolve(server);
             });
