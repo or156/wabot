@@ -1,12 +1,24 @@
+const express = require('express');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
-const express = require('express');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const HOST = '0.0.0.0';
+const PORT = process.env.PORT || 10000;
+
+// נקודות קצה של השרת
+app.get('/', (req, res) => {
+    res.send('WhatsApp Bot is running!');
+});
+
+app.get('/healthz', (req, res) => {
+    if (isClientReady) {
+        res.status(200).send('OK');
+    } else {
+        res.status(500).send('Client not ready');
+    }
+});
 
 let client = null;
 let isClientReady = false;
@@ -192,22 +204,20 @@ process.on('unhandledRejection', (err) => {
     reconnect();
 });
 
-// הפעלת השרת
-app.listen(PORT, HOST, () => {
-    console.log(`השרת פעיל בכתובת http://${HOST}:${PORT}`);
-    client = createClient();
-    initializeClient();
-});
-
-// נקודות קצה של השרת
-app.get('/', (req, res) => {
-    res.send('WhatsApp Bot is running!');
-});
-
-app.get('/healthz', (req, res) => {
-    if (isClientReady) {
-        res.status(200).send('OK');
-    } else {
-        res.status(500).send('Client not ready');
+// הפעלת השרת והבוט
+const startServer = async () => {
+    try {
+        const server = await app.listen(PORT);
+        console.log(`השרת פעיל בפורט ${PORT}`);
+        
+        client = createClient();
+        initializeClient();
+        
+        return server;
+    } catch (error) {
+        console.error('שגיאה בהפעלת השרת:', error);
+        process.exit(1);
     }
-}); 
+};
+
+startServer(); 
