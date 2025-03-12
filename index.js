@@ -8,6 +8,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
 
+app.get('/', (req, res) => {
+    res.send('WhatsApp Bot is running!');
+});
+
 // פונקציית גיבוי
 function backupResponses() {
     try {
