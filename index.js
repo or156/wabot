@@ -205,19 +205,37 @@ process.on('unhandledRejection', (err) => {
 });
 
 // הפעלת השרת והבוט
-const startServer = async () => {
+const startServer = () => {
+    return new Promise((resolve, reject) => {
+        try {
+            const server = app.listen(PORT, '0.0.0.0', () => {
+                console.log(`השרת פעיל בפורט ${PORT}`);
+                resolve(server);
+            });
+
+            server.on('error', (error) => {
+                console.error('שגיאת שרת:', error);
+                reject(error);
+            });
+        } catch (error) {
+            console.error('שגיאה בהפעלת השרת:', error);
+            reject(error);
+        }
+    });
+};
+
+// התחלת האפליקציה
+const start = async () => {
     try {
-        const server = await app.listen(PORT);
-        console.log(`השרת פעיל בפורט ${PORT}`);
+        await startServer();
+        console.log('השרת הופעל בהצלחה, מתחיל את הבוט...');
         
         client = createClient();
         initializeClient();
-        
-        return server;
     } catch (error) {
-        console.error('שגיאה בהפעלת השרת:', error);
+        console.error('שגיאה בהפעלת האפליקציה:', error);
         process.exit(1);
     }
 };
 
-startServer(); 
+start(); 
