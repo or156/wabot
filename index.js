@@ -8,9 +8,105 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
 
-app.get('/', (req, res) => {
-    res.send('WhatsApp Bot is running!');
-});
+let client = null;
+let isClientReady = false;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+
+// פונקציה ליצירת הקליינט
+function createClient() {
+    return new Client({
+        authStrategy: new LocalAuth(),
+        puppeteer: {
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--disable-gpu'
+            ]
+        }
+    });
+}
+
+// פונקציה להתחברות מחדש
+async function reconnect() {
+    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        console.error('הגענו למקסימום נסיונות התחברות. מפעיל מחדש את השרת...');
+        process.exit(1); // Render יפעיל מחדש את השרת
+        return;
+    }
+
+    console.log(`נסיון התחברות מחדש מספר ${reconnectAttempts + 1}...`);
+    reconnectAttempts++;
+
+    try {
+        if (client) {
+            await client.destroy();
+        }
+        client = createClient();
+        initializeClient();
+    } catch (error) {
+        console.error('שגיאה בנסיון התחברות מחדש:', error);
+        setTimeout(reconnect, 5000 * reconnectAttempts); // זמן המתנה גדל עם כל נסיון
+    }
+}
+
+// אתחול הקליינט והאזנה לאירועים
+function initializeClient() {
+    client.on('qr', (qr) => {
+        console.log('התקבל קוד QR, יש לסרוק אותו להתחברות:');
+        qrcode.generate(qr, { small: true });
+    });
+
+    client.on('ready', () => {
+        console.log('הבוט מחובר ופעיל!');
+        isClientReady = true;
+        reconnectAttempts = 0; // איפוס מונה הנסיונות כשמצליחים להתחבר
+    });
+
+    client.on('disconnected', (reason) => {
+        console.log('הבוט התנתק. סיבה:', reason);
+        isClientReady = false;
+        reconnect();
+    });
+
+    client.on('auth_failure', () => {
+        console.error('אימות נכשל');
+        isClientReady = false;
+        reconnect();
+    });
+
+    client.on('message', async (msg) => {
+        console.log('התקבלה הודעה:', msg.body);
+        
+        try {
+            const command = commands[msg.body.split(' ')[0]];
+            if (command) {
+                await command(msg);
+                console.log('הפקודה בוצעה:', msg.body);
+                return;
+            }
+            
+            if (learnedResponses[msg.body]) {
+                await msg.reply(learnedResponses[msg.body]);
+                console.log('נשלחה תשובה להודעה:', msg.body);
+                return;
+            }
+        } catch (error) {
+            console.error('שגיאה בטיפול בהודעה:', error);
+        }
+    });
+
+    // התחלת הקליינט
+    client.initialize().catch(err => {
+        console.error('שגיאה באתחול הקליינט:', err);
+        reconnect();
+    });
+}
 
 // פונקציית גיבוי
 function backupResponses() {
@@ -38,22 +134,6 @@ try {
 } catch (error) {
     console.log('No learned responses yet');
 }
-
-const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: {
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--disable-gpu'
-        ]
-    }
-});
 
 // פונקציה לחילוץ טקסט בין מרכאות
 function extractQuotedText(text) {
@@ -101,54 +181,33 @@ const commands = {
     }
 };
 
-client.on('qr', (qr) => {
-    console.log('QR Code received, scan it to authenticate:');
-    qrcode.generate(qr, { small: true });
-});
-
-client.on('ready', () => {
-    console.log('Bot is ready and running 24/7!');
-});
-
-client.on('message', async (msg) => {
-    console.log('Got message:', msg.body);
-    
-    try {
-        // בדיקה אם זו פקודה
-        const command = commands[msg.body.split(' ')[0]];
-        if (command) {
-            await command(msg);
-            console.log('Command executed:', msg.body);
-            return;
-        }
-        
-        // בדיקה אם יש תשובה שנלמדה
-        if (learnedResponses[msg.body]) {
-            await msg.reply(learnedResponses[msg.body]);
-            console.log('Sent response for:', msg.body);
-            return;
-        }
-    } catch (error) {
-        console.error('Error in message handler:', error);
-    }
-});
-
 // התמודדות עם שגיאות לא צפויות
 process.on('uncaughtException', (err) => {
-    console.error('Uncaught Exception:', err);
+    console.error('שגיאה לא צפויה:', err);
+    reconnect();
 });
 
 process.on('unhandledRejection', (err) => {
-    console.error('Unhandled Rejection:', err);
+    console.error('דחייה לא מטופלת:', err);
+    reconnect();
 });
 
-// Start the server first
+// הפעלת השרת
 app.listen(PORT, HOST, () => {
-    console.log(`Server is running on http://${HOST}:${PORT}`);
-    
-    // Initialize WhatsApp client after server is running
-    console.log('Starting WhatsApp client...');
-    client.initialize().catch(err => {
-        console.error('Failed to initialize client:', err);
-    });
+    console.log(`השרת פעיל בכתובת http://${HOST}:${PORT}`);
+    client = createClient();
+    initializeClient();
+});
+
+// נקודות קצה של השרת
+app.get('/', (req, res) => {
+    res.send('WhatsApp Bot is running!');
+});
+
+app.get('/healthz', (req, res) => {
+    if (isClientReady) {
+        res.status(200).send('OK');
+    } else {
+        res.status(500).send('Client not ready');
+    }
 }); 
