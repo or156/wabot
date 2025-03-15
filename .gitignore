@@ -1,7 +1,8 @@
 node_modules/
 .wwebjs_auth/
-.wwebjs_cache/
-backups/
-learned.json
-.env
-*.log 
+*.log
+logs/
+chrome-win/
+conversation_logs/
+local_version/
+versions/

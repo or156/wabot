@@ -1,23 +1,22 @@
 {
-  "name": "whatsapp-bot",
+  "name": "whatsapp-bot-local",
   "version": "1.0.0",
-  "description": "WhatsApp bot that runs 24/7",
+  "description": "Local WhatsApp Bot with Learning Capabilities",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "pm2 start ecosystem.config.js",
     "prod": "pm2 start ecosystem.config.js --env production",
     "stop": "pm2 stop wabot",
-    "restart": "pm2 restart wabot",
     "logs": "pm2 logs wabot",
-    "monitor": "pm2 monit wabot"
+    "status": "pm2 status wabot"
   },
   "dependencies": {
-    "express": "^4.21.2",
+    "fs": "0.0.1-security",
     "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.23.0"
+    "whatsapp-web.js": "^1.23.0",
+    "pm2": "^5.3.1"
   },
-  "devDependencies": {
-    "nodemon": "^3.1.9"
+  "engines": {
+    "node": ">=22.14.0"
   }
 }

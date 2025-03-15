@@ -1,285 +1,159 @@
-const express = require('express');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
-const path = require('path');
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+// רשימת מספרי טלפון מורשים לאדמין
+const ADMIN_NUMBERS = [
+    '972509027347@c.us'  // המספר שלך: 050-9027347
+];
 
-console.log('מתחיל את האפליקציה...');
-
-// נקודות קצה של השרת
-app.get('/', (req, res) => {
-    res.send('WhatsApp Bot is running!');
-});
-
-app.get('/healthz', (req, res) => {
-    if (isClientReady) {
-        res.status(200).send('OK');
-    } else {
-        res.status(500).send('Client not ready');
-    }
-});
-
-let client = null;
-let isClientReady = false;
-let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 5;
-
-// פונקציה ליצירת הקליינט
-function createClient() {
-    console.log('יוצר קליינט חדש...');
-    return new Client({
-        authStrategy: new LocalAuth(),
-        puppeteer: {
-            headless: true,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--no-first-run',
-                '--no-zygote',
-                '--disable-gpu'
-            ]
-        }
-    });
+// בדיקה אם המספר הוא אדמין
+function isAdmin(number) {
+    return ADMIN_NUMBERS.includes(number);
 }
 
-// פונקציה להתחברות מחדש
-async function reconnect() {
-    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.error('הגענו למקסימום נסיונות התחברות. מפעיל מחדש את השרת...');
-        process.exit(1);
-        return;
-    }
-
-    console.log(`נסיון התחברות מחדש מספר ${reconnectAttempts + 1}...`);
-    reconnectAttempts++;
-
-    try {
-        if (client) {
-            await client.destroy();
-        }
-        client = createClient();
-        initializeClient();
-    } catch (error) {
-        console.error('שגיאה בנסיון התחברות מחדש:', error);
-        setTimeout(reconnect, 5000 * reconnectAttempts);
-    }
-}
-
-// אתחול הקליינט והאזנה לאירועים
-function initializeClient() {
-    console.log('מאתחל את הקליינט...');
-
-    client.on('qr', (qr) => {
-        console.log('\n\nהתקבל קוד QR, יש לסרוק אותו להתחברות:\n');
-        qrcode.generate(qr, { small: true });
-        console.log('\n');
-    });
-
-    client.on('ready', () => {
-        console.log('הבוט מחובר ופעיל!');
-        isClientReady = true;
-        reconnectAttempts = 0;
-    });
-
-    client.on('disconnected', (reason) => {
-        console.log('הבוט התנתק. סיבה:', reason);
-        isClientReady = false;
-        reconnect();
-    });
-
-    client.on('auth_failure', () => {
-        console.error('אימות נכשל');
-        isClientReady = false;
-        reconnect();
-    });
-
-    // הוספת אירועים חדשים לדיבאג
-    client.on('loading_screen', (percent, message) => {
-        console.log('טוען:', percent, '%', message);
-    });
-
-    client.on('authenticated', () => {
-        console.log('הבוט אומת בהצלחה!');
-    });
-
-    client.on('message', async (msg) => {
-        // מסנן הודעות מקבוצות והודעות סטטוס
-        if (msg.from.includes('@g.us') || msg.from === 'status@broadcast') {
-            return;
-        }
-
-        console.log('התקבלה הודעה פרטית:', msg.body);
-        console.log('מאת:', msg.from);
-        
-        try {
-            // בודק קודם אם יש תשובה מוכנה - זה המקרה הנפוץ ביותר
-            if (learnedResponses[msg.body]) {
-                console.log('נמצאה תשובה מוכנה:', learnedResponses[msg.body]);
-                await msg.reply(learnedResponses[msg.body]);
-                return;
-            }
-
-            // אם אין תשובה מוכנה, בודק אם זו פקודה
-            const command = commands[msg.body.split(' ')[0]];
-            if (command) {
-                console.log('מבצע פקודה:', msg.body);
-                await command(msg);
-                return;
-            }
-            
-            console.log('לא נמצאה תשובה להודעה זו');
-        } catch (error) {
-            console.error('שגיאה בטיפול בהודעה:', error);
-        }
-    });
-
-    console.log('מתחיל את הקליינט...');
-    client.initialize().catch(err => {
-        console.error('שגיאה באתחול הקליינט:', err);
-        reconnect();
-    });
-}
-
-// פונקציית גיבוי
-function backupResponses() {
-    try {
-        const backupDir = path.join(__dirname, 'backups');
-        if (!fs.existsSync(backupDir)) {
-            fs.mkdirSync(backupDir);
-        }
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const backupPath = path.join(backupDir, `responses_${timestamp}.json`);
-        fs.writeFileSync(backupPath, JSON.stringify(learnedResponses, null, 2));
-        console.log('Backup created:', backupPath);
-    } catch (error) {
-        console.error('Error creating backup:', error);
-    }
-}
+let isConnected = false;
+let lastQRTime = 0;
+const QR_TIMEOUT = 60000; // 60 seconds
 
 // מאגר התשובות הנלמדות
 let learnedResponses = {};
 try {
     if (fs.existsSync('./learned.json')) {
         learnedResponses = JSON.parse(fs.readFileSync('./learned.json', 'utf8'));
-        console.log('Loaded responses:', Object.keys(learnedResponses).length);
     }
 } catch (error) {
-    console.log('No learned responses yet');
+    console.error('Error loading learned responses:', error);
+}
+
+// שמירת תשובות לקובץ
+function saveResponses() {
+    fs.writeFileSync('./learned.json', JSON.stringify(learnedResponses, null, 2));
 }
 
 // פונקציה לחילוץ טקסט בין מרכאות
 function extractQuotedText(text) {
-    const matches = text.match(/"([^"]+)"/g);
-    if (!matches || matches.length < 1) return null;
+    const matches = text.match(/"([^"]*)"/g);
+    if (!matches || matches.length < 2) return null;
     return matches.map(m => m.slice(1, -1));
 }
 
 // הגדרת הפקודות
 const commands = {
-    'עזרה': async (msg) => {
-        const helpText = `הפקודות הזמינות:
-1. שלום - קבלת ברכה אקראית
-2. למד "שאלה" תגיב "תשובה" - לימוד תשובה חדשה
-3. רשימה - הצגת כל התשובות שלמדתי
-4. עזרה - הצגת רשימה זו`;
-        await msg.reply(helpText);
-    },
-    'שלום': async (msg) => {
-        const greetings = [
-            'היי! מה שלומך?',
-            'שלום וברכה!',
-            'ברוך הבא! איך אפשר לעזור?',
-            'נעים מאוד! במה אוכל לסייע?'
-        ];
-        const randomGreeting = greetings[Math.floor(Math.random() * greetings.length)];
-        await msg.reply(randomGreeting);
-    },
     'למד': async (msg) => {
-        try {
-            const fullText = msg.body;
-            const parts = extractQuotedText(fullText);
-            
-            if (!parts || parts.length !== 2) {
-                await msg.reply('הפורמט הנכון הוא:\nלמד "הודעה נכנסת" תגיב "הודעה יוצאת"');
-                return;
-            }
-
-            const [question, answer] = parts;
-            learnedResponses[question] = answer;
-            
-            // שמירת התשובות לקובץ וגיבוי
-            fs.writeFileSync('./learned.json', JSON.stringify(learnedResponses, null, 2));
-            backupResponses();
-            
-            await msg.reply(`למדתי:\nכשאקבל: "${question}"\nאגיב: "${answer}"`);
-        } catch (error) {
-            console.error('שגיאה בפקודת למד:', error);
-            await msg.reply('אירעה שגיאה בלמידה. הפורמט הנכון הוא:\nלמד "הודעה נכנסת" תגיב "הודעה יוצאת"');
+        if (!isAdmin(msg.from)) return; // אם לא אדמין, פשוט מתעלמים
+        const fullText = msg.body;
+        const parts = extractQuotedText(fullText);
+        
+        if (!parts || parts.length !== 2) {
+            await msg.reply('למד "הודעה נכנסת" תגיב "הודעה יוצאת"');
+            return;
         }
+
+        const [question, answer] = parts;
+        learnedResponses[question] = answer;
+        saveResponses();
+        await msg.reply(`למדתי: "${question}" -> "${answer}"`);
     },
     'רשימה': async (msg) => {
-        try {
-            const responses = Object.entries(learnedResponses)
-                .map(([q, a]) => `"${q}" -> "${a}"`)
-                .join('\n');
-                
-            await msg.reply(responses || 'אין תגובות שמורות');
-        } catch (error) {
-            console.error('Error in list command:', error);
-            await msg.reply('אירעה שגיאה בהצגת הרשימה, נסה שוב');
-        }
+        if (!isAdmin(msg.from)) return; // אם לא אדמין, פשוט מתעלמים
+        const responses = Object.entries(learnedResponses)
+            .map(([q, a]) => `"${q}" -> "${a}"`)
+            .join('\n');
+            
+        await msg.reply(responses || 'אין תגובות שמורות');
     }
 };
 
-// התמודדות עם שגיאות לא צפויות
+// יצירת לקוח WhatsApp
+const client = new Client({
+    authStrategy: new LocalAuth(),
+    puppeteer: {
+        args: ['--no-sandbox']
+    }
+});
+
+client.on('qr', (qr) => {
+    const now = Date.now();
+    if (now - lastQRTime > QR_TIMEOUT) {
+        console.log('\n--- New QR Code ---');
+        qrcode.generate(qr, { small: true });
+        lastQRTime = now;
+        console.log('Scan this QR code within 60 seconds');
+        console.log('Connection status:', isConnected ? 'Connected' : 'Disconnected');
+    }
+});
+
+client.on('ready', () => {
+    console.log('Bot is ready!');
+    isConnected = true;
+});
+
+client.on('disconnected', (reason) => {
+    console.log('Bot was disconnected:', reason);
+    isConnected = false;
+    // הפעלה מחדש אוטומטית
+    setTimeout(() => {
+        console.log('Attempting to reconnect...');
+        client.initialize();
+    }, 5000); // ניסיון חיבור מחדש אחרי 5 שניות
+});
+
+client.on('message', async msg => {
+    try {
+        const text = msg.body;
+        
+        // שמירת המצב הנוכחי לפני כל פעולה
+        const currentState = {
+            responses: { ...learnedResponses },
+            isConnected,
+            lastQRTime
+        };
+        
+        // בדיקה אם זו פקודה
+        if (text.startsWith('למד ') || text === 'רשימה') {
+            const command = text === 'רשימה' ? 'רשימה' : 'למד';
+            await commands[command](msg);
+            return;
+        }
+
+        // בדיקה אם יש תשובה מוכנה
+        if (learnedResponses[text]) {
+            await msg.reply(learnedResponses[text]);
+        }
+
+    } catch (error) {
+        console.error('Error handling message:', error);
+        // במקרה של שגיאה, ננסה להתחבר מחדש
+        if (!isConnected) {
+            setTimeout(() => {
+                console.log('Attempting to reconnect after error...');
+                client.initialize();
+            }, 5000);
+        }
+    }
+});
+
+// טיפול בשגיאות לא צפויות
 process.on('uncaughtException', (err) => {
-    console.error('שגיאה לא צפויה:', err);
-    reconnect();
+    console.error('Uncaught Exception:', err);
+    // הפעלה מחדש במקרה של שגיאה קריטית
+    setTimeout(() => {
+        console.log('Restarting after uncaught exception...');
+        client.initialize();
+    }, 5000);
 });
 
 process.on('unhandledRejection', (err) => {
-    console.error('דחייה לא מטופלת:', err);
-    reconnect();
+    console.error('Unhandled Rejection:', err);
+    // הפעלה מחדש במקרה של שגיאה לא מטופלת
+    if (!isConnected) {
+        setTimeout(() => {
+            console.log('Restarting after unhandled rejection...');
+            client.initialize();
+        }, 5000);
+    }
 });
 
-// הפעלת השרת והבוט
-const startServer = () => {
-    return new Promise((resolve, reject) => {
-        try {
-            console.log(`מנסה להפעיל שרת בפורט ${PORT}...`);
-            const server = app.listen(PORT, () => {
-                console.log(`השרת פעיל בפורט ${PORT}`);
-                resolve(server);
-            });
-
-            server.on('error', (error) => {
-                console.error('שגיאת שרת:', error);
-                reject(error);
-            });
-        } catch (error) {
-            console.error('שגיאה בהפעלת השרת:', error);
-            reject(error);
-        }
-    });
-};
-
-// התחלת האפליקציה
-const start = async () => {
-    try {
-        await startServer();
-        console.log('השרת הופעל בהצלחה, מתחיל את הבוט...');
-        
-        client = createClient();
-        initializeClient();
-    } catch (error) {
-        console.error('שגיאה בהפעלת האפליקציה:', error);
-        process.exit(1);
-    }
-};
-
-start(); 
+// התחלת הבוט
+client.initialize();
