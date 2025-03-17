@@ -42,26 +42,49 @@ function extractQuotedText(text) {
 const commands = {
     'למד': async (msg) => {
         if (!isAdmin(msg.from)) return; // אם לא אדמין, פשוט מתעלמים
-        const fullText = msg.body;
-        const parts = extractQuotedText(fullText);
         
-        if (!parts || parts.length !== 2) {
-            await msg.reply('למד "הודעה נכנסת" תגיב "הודעה יוצאת"');
-            return;
-        }
+        try {
+            const fullText = msg.body;
+            const parts = extractQuotedText(fullText);
+            
+            if (!parts || parts.length !== 2) {
+                await msg.reply('שימוש נכון בפקודה:\nלמד "הודעה נכנסת" תגיב "הודעה יוצאת"');
+                return;
+            }
 
-        const [question, answer] = parts;
-        learnedResponses[question] = answer;
-        saveResponses();
-        await msg.reply(`למדתי: "${question}" -> "${answer}"`);
+            const [question, answer] = parts;
+            if (!question || !answer) {
+                await msg.reply('❌ שגיאה: חסר טקסט בין המרכאות');
+                return;
+            }
+
+            learnedResponses[question] = answer;
+            saveResponses();
+            await msg.reply(`✅ למדתי:\n"${question}" ➡️ "${answer}"`);
+        } catch (error) {
+            console.error('Error in learn command:', error);
+            await msg.reply('❌ שגיאה בלימוד התגובה. נסה שוב.');
+        }
     },
     'רשימה': async (msg) => {
         if (!isAdmin(msg.from)) return; // אם לא אדמין, פשוט מתעלמים
-        const responses = Object.entries(learnedResponses)
-            .map(([q, a]) => `"${q}" -> "${a}"`)
-            .join('\n');
-            
-        await msg.reply(responses || 'אין תגובות שמורות');
+        
+        try {
+            const responses = Object.entries(learnedResponses);
+            if (responses.length === 0) {
+                await msg.reply('📝 אין תגובות שמורות');
+                return;
+            }
+
+            const formattedResponses = responses
+                .map(([q, a], i) => `${i + 1}. "${q}" ➡️ "${a}"`)
+                .join('\n');
+                
+            await msg.reply(`📝 רשימת התגובות:\n${formattedResponses}`);
+        } catch (error) {
+            console.error('Error in list command:', error);
+            await msg.reply('❌ שגיאה בהצגת הרשימה. נסה שוב.');
+        }
     }
 };
 
@@ -138,23 +161,35 @@ client.on('message', async msg => {
         // בדיקה אם זו פקודה
         if (text.startsWith('למד ') || text === 'רשימה') {
             const command = text === 'רשימה' ? 'רשימה' : 'למד';
-            await commands[command](msg);
+            try {
+                await commands[command](msg);
+            } catch (cmdError) {
+                console.error('Error executing command:', cmdError);
+                if (isAdmin(msg.from)) {
+                    await msg.reply('❌ שגיאה בביצוע הפקודה. נסה שוב.');
+                }
+            }
             return;
         }
 
         // בדיקה אם יש תשובה מוכנה
         if (learnedResponses[text]) {
-            await msg.reply(learnedResponses[text]);
+            try {
+                await msg.reply(learnedResponses[text]);
+            } catch (replyError) {
+                console.error('Error sending reply:', replyError);
+            }
         }
 
     } catch (error) {
         console.error('Error handling message:', error);
-        // במקרה של שגיאה, ננסה להתחבר מחדש
-        if (!isConnected) {
-            setTimeout(() => {
-                console.log('Attempting to reconnect after error...');
-                client.initialize();
-            }, 5000);
+        // במקרה של שגיאה, שלח התראה לאדמין
+        if (isAdmin(msg.from)) {
+            try {
+                await msg.reply('❌ אירעה שגיאה בטיפול בהודעה. נסה שוב.');
+            } catch (notifyError) {
+                console.error('Error sending error notification:', notifyError);
+            }
         }
     }
 });
