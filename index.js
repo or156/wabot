@@ -84,18 +84,43 @@ client.on('qr', (qr) => {
     }
 });
 
-client.on('ready', () => {
+client.on('ready', async () => {
     console.log('Bot is ready!');
     isConnected = true;
+    await notifyAdmin('✅ הבוט מחובר ופעיל!');
 });
 
-client.on('disconnected', (reason) => {
+// פונקציה לשליחת התראה לאדמין
+async function notifyAdmin(message) {
+    try {
+        for (const adminNumber of ADMIN_NUMBERS) {
+            await client.sendMessage(adminNumber, message);
+        }
+    } catch (error) {
+        console.error('Error sending admin notification:', error);
+    }
+}
+
+client.on('disconnected', async (reason) => {
     console.log('Bot was disconnected:', reason);
     isConnected = false;
+    
+    // שליחת התראה לאדמין
+    await notifyAdmin('⚠️ *התראה*: הבוט התנתק מהשרת.\nסיבה: ' + reason);
+    
     // הפעלה מחדש אוטומטית
-    setTimeout(() => {
+    setTimeout(async () => {
         console.log('Attempting to reconnect...');
-        client.initialize();
+        try {
+            await client.initialize();
+            // אם החיבור הצליח, שלח עדכון לאדמין
+            if (isConnected) {
+                await notifyAdmin('✅ הבוט התחבר מחדש בהצלחה!');
+            }
+        } catch (error) {
+            console.error('Reconnection failed:', error);
+            await notifyAdmin('❌ ניסיון החיבור מחדש נכשל. נא לבדוק את הבוט.');
+        }
     }, 5000); // ניסיון חיבור מחדש אחרי 5 שניות
 });
 
